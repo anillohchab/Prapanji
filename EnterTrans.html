@@ -1,0 +1,427 @@
+<html>
+  <head>
+    <base target="_top">
+    <link rel="stylesheet" href="https://ssl.gstatic.com/docs/script/css/add-ons1.css">
+  </head>
+
+  <body>
+    <style>
+      td {
+        padding:0;
+      }
+      
+      // BEGIN: Tooltips CSS from: https://www.w3schools.com/howto/howto_css_tooltip.asp
+      .tooltip {
+        position: relative;
+        display: inline-block;
+        //border-bottom: 1px dotted black;
+      }
+
+      .tooltip .tooltiptext {
+        visibility: hidden;
+        width: 300px;
+        background-color: #f1f1f1;
+        color: #333;
+        text-align: left;
+        border-radius: 6px;
+        border: 1px solid #dcdcdc;
+        padding: 5px 0;
+        position: absolute;
+        z-index: 1;
+        opacity: 0;
+        transition: opacity 0.3s;
+        top:-5px;
+        left:110%;
+      }
+
+      .tooltip .tooltiptext::after {
+        content: "";
+        position: absolute;
+        top: 20%;
+        right: 100%;
+        margin-left: -5px;
+        border-width: 5px;
+        border-style: solid;
+        border-color: transparent #dcdcdc transparent transparent;
+      }
+
+      .tooltip:hover .tooltiptext {
+        visibility: visible;
+        opacity: 1;
+      }
+      // END: Tooltips CSS
+    </style>
+    
+    <!-- TODO -> REMOVE
+      -- Clipboard handling came from this article: 
+      --     https://www.lucidchart.com/techblog/2014/12/02/definitive-guide-copying-pasting-javascript/
+      --
+      -- If "hidden-input" needs to be hidden using CSS, see: https://jsfiddle.net/g8w9vf42/
+      <input id="hidden-input" class="hidden_input" type="text" value=""/>
+      -->
+    
+    <div style="width=100%;display:flex;">
+      <strong style="width=95px">Account Type:</strong><br/>
+      <div style="padding-left:5px;">
+        <input id="trans-src-chk" type="radio" name="transSource" value="checking" checked><strong>Checking Account</strong><br/>
+        <div class="tooltip">
+          <input id="trans-src-cc" type="radio" name="transSource" value="creditcard"><strong>Credit Card</strong><br/>
+          <span class="tooltiptext">sign will be flipped when entered into Transactions sheet</span>
+        </div>
+        <br/>
+      </div>
+    </div>
+    <div style="width=100%;display:flex;justify-content=center;">
+      <strong style="width:95px;">Input Format:</strong>
+      <select id="col-select-combobox" style="padding-left:10px;">
+        <option value="standard">Spreadsheet</option>
+        <option value="standard-minus-post-date">Spreadsheet w/o Post Date</option>
+        <option value="chase-bank">Chase Bank Online</option>
+      </select>
+    </div>
+    
+    <br/>
+    
+    <div style="width:100%;display:block">
+        <table width="635">
+          <tr id="header-row">
+            <th id="type-col-header" class="typeCol"><strong>Type</strong></th>
+            <th id="transDate-col-header" class="transDateCol"><strong>Trans Date</strong></th>
+            <th id="postDate-col-header" class="postDateCol"><strong>Post Date</strong></th>
+            <th id="desc-col-header" class="descCol"><strong>Description</strong></th>
+            <th id="amt-col-header" class="amtCol"><strong>Amount</strong></th>
+          </tr>
+        </table>
+        <br/>
+        <input type="submit" value="Submit" class="action" onclick="submit_data()" >
+        <input type="button" value="Close" onclick="google.script.host.close()" />
+        <input id="detect-duplicates-chkbox" style="left-padding:15px" type="checkbox" checked/>Detect Duplicates
+    </div>
+    
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+    <script>
+      var nextRowId = 1;
+      var curColumnSelection;
+      $(document).ready(initialize);
+      
+      // Initialize the dialog
+      function initialize() {
+        document.addEventListener('paste', handePasteEvent);
+        $("#trans-src-chk").focus();
+        
+        curColumnSelection = $(this).find('option:selected').val();
+        $("#col-select-combobox").change(handleChangeColumnLayoutEvent);
+
+        rebuildTable();
+      }
+      
+      ///////////////////////////////////////////////////////
+      // Methods for creating/changing the table
+      ///////////////////////////////////////////////////////
+      
+      function handleChangeColumnLayoutEvent(evt) {
+        console.log(evt);
+        var prevColumnSelection = curColumnSelection;
+        curColumnSelection = $(this).find('option:selected').val();
+        console.log('New Value: ' + curColumnSelection);
+        
+        var tableNeedsRebuilt = false;
+        if (curColumnSelection == 'standard') {
+          showPostDateColumn();
+          tableNeedsRebuilt = (prevColumnSelection != 'standard-minus-post-date');
+        } else if (curColumnSelection == 'standard-minus-post-date') {
+          hidePostDateColumn();
+          tableNeedsRebuilt = (prevColumnSelection != 'standard');
+        } else if (curColumnSelection == 'chase-bank') {
+          hidePostDateColumn();
+          tableNeedsRebuilt = (prevColumnSelection != 'chase-bank');
+        }
+        
+        if (tableNeedsRebuilt) {
+          rebuildTable();
+        }
+      }
+      
+      function rebuildTable() {
+        // Remove all rows from the table, then rebuild the header row
+        $(".data-row").remove();
+        rebuildTableHeader();
+      
+        // Create the empty table rows
+        var tbody = $("table tbody");
+        for (var i = 0; i < 5; ++i) {
+          tbody.append(createRow());
+        }
+      }
+      
+      function rebuildTableHeader() {
+        // Detach the headers
+        var typeCol = $('#type-col-header').detach();
+        var transDateCol = $('#transDate-col-header').detach();
+        var postDateCol = $('#postDate-col-header').detach();
+        var descCol = $('#desc-col-header').detach();
+        var amtCol = $('#amt-col-header').detach();
+        
+        // Reattach the headers in the correct order
+        var headerRow = $('#header-row');
+        if (curColumnSelection == 'standard' || curColumnSelection == 'standard-minus-post-date') {
+          headerRow.append(typeCol);
+          headerRow.append(transDateCol);
+          headerRow.append(postDateCol);
+          headerRow.append(descCol);
+          headerRow.append(amtCol);
+        } else if (curColumnSelection == 'chase-bank') {
+          console.log('Attaching headers in chase-bank order');
+          headerRow.append(transDateCol);
+          headerRow.append(descCol);
+          headerRow.append(typeCol);
+          headerRow.append(amtCol);
+          headerRow.append(postDateCol);
+        }
+      }
+      
+      function createRow() {
+        console.log('createRow()- ' + curColumnSelection);
+        if (curColumnSelection == 'standard' || curColumnSelection == 'standard-minus-post-date') {
+          return createStandardRow();
+        } else {
+          return createOnline1Row();
+        }
+      }
+        
+      function createStandardRow() {
+        var hidePostDateCol = ($('.postDateCol:visible').length == 0);
+        var descWidth = 300;
+        if (hidePostDateCol) {
+          descWidth += 90;
+        }
+        return '<tr id="data-row-' + nextRowId++ + '" class="data-row">' 
+               + td(80, 'typeCol') 
+               + td(90, 'transDateCol') 
+               + td(90, 'postDateCol', hidePostDateCol) 
+               + td(descWidth, 'descCol') 
+               + td(75, 'amtCol') 
+               + '</tr>'; 
+      }
+      
+      function createOnline1Row() {
+        var hidePostDateCol = ($('.postDateCol:visible').length == 0);
+        var descWidth = 300;
+        if (hidePostDateCol) {
+          descWidth += 90;
+        }
+        return '<tr id="data-row-' + nextRowId++ + '" class="data-row">' 
+               + td(90, 'transDateCol') 
+               + td(descWidth, 'descCol')
+               + td(80, 'typeCol') 
+               + td(90, 'postDateCol', hidePostDateCol) 
+               + td(75, 'amtCol') 
+               + '</tr>'; 
+      }
+      
+      // Called to show the 'Post Date' column
+      function showPostDateColumn() {
+        $('.postDateCol').each(function() {
+          $(this).css('display', 'table-cell');
+        });
+        $('.descCol input').each(function() {
+          $(this).css('width', '300px');
+        });
+      }
+
+      // Called to hide the 'Post Date' column
+      function hidePostDateColumn() {
+        $('.postDateCol').each(function() {
+          $(this).css('display', 'none');
+        });
+        $('.descCol input').each(function() {
+          $(this).css('width', '390px');
+        });
+      }
+      
+      function td(width, classAttr, hide) {
+        var attrs = ' class="' + classAttr + '"'
+        if (hide) {
+          attrs += ' style="display:none"';
+        }
+        return '<td' + attrs + '>' + '<input type="text" style="width:' + width + 'px;"/></td>';
+      }
+      
+      ///////////////////////////////////////////////////////
+      // Methods for handling paste event
+      ///////////////////////////////////////////////////////
+      
+      // Called when the user pastes data into the dialog
+      function handePasteEvent(evt) {
+        console.log(evt);
+        var rawData = evt.clipboardData.getData("text/plain");
+        var htmlData = evt.clipboardData.getData("text/html");
+        
+        // Parse the clipboard data
+        var lines = parseHtmlData(htmlData);
+        if (lines == null) {
+          lines = [];
+          rawData.split(String.fromCharCode(13)).forEach(function(line) {
+            lines.push(line.split(String.fromCharCode(9)));
+          });
+        }
+        
+        // Check to see if the user is really pasting table data
+        if (lines.length == 0) {
+          return;
+        }
+        if (lines.length == 1) {
+          var cells = lines[0];
+          if (cells == null || cells.length < 2) {
+            return;
+          }
+        }
+        
+        // Check the focused element to determine where to paste into the table
+        var focusedEl = $(document.activeElement);
+        var tagName = focusedEl.prop('tagName').toLowerCase();
+        if (tagName != 'input' && tagName != 'select') {
+          console.log('Unexpected tagName: ' + tagName);
+          return;
+        }
+        
+        // Add data to the table
+        if (focusedEl.prop('type') == 'text') {
+          addLinesToTable(lines, focusedEl.parents('tr'), focusedEl);
+        }
+        else {
+          addLinesToTable(lines);
+        }
+ 
+        evt.preventDefault();
+      }
+      
+      function parseHtmlData(htmlData) {
+        var tempDom = $('<doc>').append($.parseHTML(htmlData));
+        var tableRows = $('table tr', tempDom);
+        if (tableRows.length == 0) {
+          return null;
+        }
+        
+        var lines = [];
+        $('table tr', tempDom).each(function() {
+          var cells = [];
+          $(this).children('td').each(function() {
+            cells.push($(this).text());
+          });
+          lines.push(cells);
+        });
+        
+        console.log(lines);
+        return lines;
+      }
+      
+      function addLinesToTable(lines, startingRow, startingField) {
+        console.log('startingRow: ' + (startingRow != null ? $(startingRow).prop('id') : 'null'));
+      
+        var prevRow = null;
+        var currRow = startingRow;
+        lines.forEach(function(cells) {
+          console.log('addLinesToTable: ' + cells);
+          if (cells.length == 0) {
+            return;
+          }
+          if (currRow == null) {
+            currRow = advanceRow(prevRow);
+          }
+          
+          // Add the data to currRow
+          addDataToRow(currRow, startingField, cells);
+          prevRow = currRow;
+          currRow = null;
+          startingField = null
+        });
+      }
+      
+      function advanceRow(prevRow) {
+        console.log('advanceRow...');
+        var tbody = $("table tbody");
+        var newRow = null;
+        if (prevRow == null) {
+          // Find the first row that's empty
+          var dataRows = tbody.children('.data-row');
+          for (var i = 0, l = dataRows.length; i < l; i++) {
+            var row = dataRows[i];
+            if ($(row).find('input:text').filter(function() { return this.value != ''; }).length == 0) {
+              console.log('Found an empty row!');
+              newRow = $(row);
+              break;
+            }
+          }
+          
+          if (newRow == null) {
+            // No empty row found, so create a new row
+            tbody.append(createRow());
+            newRow = tbody.children('tr:last');
+          }
+        } else {
+          if (prevRow.is(":last-child")) {
+            // We're on the last row, so create a new row
+            tbody.append(createRow());
+            newRow = tbody.children('tr:last');
+          } else {
+            newRow = prevRow.next('tr');
+          }
+        }
+        
+        return newRow;
+      }
+      
+      function addDataToRow(row, startingField, cells) {
+        var inputs = null;
+        if (startingField == null) {
+          inputs = $(row).find('input:visible');
+        } else {
+          inputs = [startingField];
+          $(startingField).parent('td').nextAll('td').each(function(i, tdEl) {
+            $(tdEl).children('input:visible').each(function(j, inputEl) {
+              inputs.push(inputEl);
+            });
+          });
+        }
+        console.log('# inputs: ' + inputs.length);
+        for (var idx = 0; idx < cells.length; ++idx) {
+          $(inputs[idx]).val(cells[idx]);
+        }
+      }
+
+      /////////////////////////////////////////////////////////////////
+      // Methods for extracting data from table and sending to server
+      /////////////////////////////////////////////////////////////////
+      
+      // Called with the submit button is clicked
+      function submit_data() {
+        // loop through each row
+        var values = [];
+        $('table tbody tr').each(function (i, row) {
+            var row = $(row),
+                type = row.find('.typeCol input').val(),
+                transDate = row.find('.transDateCol input').val(),
+                postDate = row.find('.postDateCol input').val(),
+                desc = row.find('.descCol input').val(),
+                amt = row.find('.amtCol input').val();
+             if (type !== undefined) {
+               if (type != '' || transDate != '' || postDate != '' || desc != '' || amt != '') {
+                 var data = {type: type, transDate: transDate, postDate: postDate, desc: desc, amt: amt};
+                 values.push(data);
+               }
+             }
+        });
+        google.script.run.withSuccessHandler(closeIt).enterTransactions({
+          transSource: $('input[type=radio][name=transSource]:checked').val(),
+          suppressDups: $('#detect-duplicates-chkbox').is(":checked"),
+          values: values
+        });
+      };
+      
+      function closeIt(){
+        google.script.host.close()
+      };
+    </script>
+  </body>
+</html>
